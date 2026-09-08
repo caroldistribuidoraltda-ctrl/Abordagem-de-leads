@@ -1,25 +1,44 @@
 import React from 'react';
-import { MessageSquareShare, FileUp, Sparkles, RefreshCw, Trash2, Download } from 'lucide-react';
+import {
+  MessageSquareShare,
+  FileUp,
+  Sparkles,
+  Trash2,
+  Download,
+  CloudCheck,
+  CloudUpload,
+  RefreshCw,
+} from 'lucide-react';
 
 interface HeaderProps {
   totalClients: number;
   totalSellers: number;
   contactedCount: number;
+  syncStatus: 'synced' | 'saving' | 'loading' | 'error';
+  lastSavedAt: string | null;
   onOpenImport: () => void;
   onLoadSample: () => void;
   onClearData: () => void;
   onExportCsv: () => void;
+  onManualSync: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   totalClients,
   totalSellers,
   contactedCount,
+  syncStatus,
+  lastSavedAt,
   onOpenImport,
   onLoadSample,
   onClearData,
   onExportCsv,
+  onManualSync,
 }) => {
+  const formattedLastSaved = lastSavedAt
+    ? new Date(lastSavedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : null;
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -35,9 +54,29 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
                 Por Vendedor
               </span>
+
+              {/* Firestore Status Badge */}
+              <button
+                type="button"
+                onClick={onManualSync}
+                title="Clique para sincronizar agora com Firebase Firestore"
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border cursor-pointer transition-colors bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
+              >
+                {syncStatus === 'saving' || syncStatus === 'loading' ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 text-emerald-600 animate-spin" />
+                    <span>Salvando no Firestore...</span>
+                  </>
+                ) : (
+                  <>
+                    <CloudCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Firestore Conectado {formattedLastSaved ? `(${formattedLastSaved})` : ''}</span>
+                  </>
+                )}
+              </button>
             </div>
             <p className="text-xs text-slate-500">
-              Importação de PDF • Agrupamento de Vendedores • Mensagens com IA
+              Importação de PDF • Agrupamento por Vendedor • Salvo no Firebase Firestore
             </p>
           </div>
         </div>

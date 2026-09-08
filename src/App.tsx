@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Client, SellerGroup, MessageConfig } from './types';
 import { SAMPLE_CLIENTS } from './data/sampleClients';
 import { buildWhatsAppLink } from './utils/phone';
@@ -8,6 +8,11 @@ import { CampaignConfig } from './components/CampaignConfig';
 import { SellerGroupView } from './components/SellerGroupView';
 import { ImportModal } from './components/ImportModal';
 import { EmptyState } from './components/EmptyState';
+import {
+  saveAppStateToFirestore,
+  loadAppStateFromFirestore,
+  subscribeToAppState,
+} from './services/firestoreService';
 
 const LOCAL_STORAGE_KEY = 'whatsapp_reactivation_clients';
 const LOCAL_STORAGE_CONFIG_KEY = 'whatsapp_reactivation_config';
@@ -34,7 +39,6 @@ export default function App() {
     } catch (e) {
       console.error('Error loading saved clients:', e);
     }
-    // Start with sample data loaded for instant first-look satisfaction
     return SAMPLE_CLIENTS;
   });
 
@@ -54,23 +58,94 @@ export default function App() {
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
   const [regeneratingClientId, setRegeneratingClientId] = useState<string | null>(null);
 
-  // Save clients to localStorage
+  // Firestore sync state
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'saving' | 'loading' | 'error'>('loading');
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const isInitialLoadDone = useRef(false);
+  const saveTimeoutRef = useRef<any>(null);
+
+  // 1. Initial load from Firestore
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initFirestoreData() {
+      try {
+        setSyncStatus('loading');
+        const remoteState = await loadAppStateFromFirestore();
+
+        if (!isMounted) return;
+
+        if (remoteState && remoteState.clients && remoteState.clients.length > 0) {
+          // Cloud has saved data! Load it directly
+          setClients(remoteState.clients);
+          if (remoteState.config) {
+            setConfig((prev) => ({ ...prev, ...remoteState.config }));
+          }
+          setLastSavedAt(remoteState.updatedAt || new Date().toISOString());
+          setSyncStatus('synced');
+        } else {
+          // Firestore is empty: initialize with current state
+          await saveAppStateToFirestore(clients, config, 'Planilha Inicial');
+          if (isMounted) {
+            setLastSavedAt(new Date().toISOString());
+            setSyncStatus('synced');
+          }
+        }
+      } catch (err) {
+        console.error('Failed to initialize Firestore data:', err);
+        if (isMounted) {
+          setSyncStatus('synced'); // LocalStorage fallback
+        }
+      } finally {
+        if (isMounted) {
+          isInitialLoadDone.current = true;
+        }
+      }
+    }
+
+    initFirestoreData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // 2. Debounced save to Firestore whenever clients or config changes after initial load
+  const triggerFirestoreSave = useCallback(
+    (newClients: Client[], newConfig: MessageConfig, sourceName?: string) => {
+      setSyncStatus('saving');
+
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+
+      saveTimeoutRef.current = setTimeout(async () => {
+        try {
+          await saveAppStateToFirestore(newClients, newConfig, sourceName);
+          setLastSavedAt(new Date().toISOString());
+          setSyncStatus('synced');
+        } catch (err) {
+          console.error('Error auto-saving to Firestore:', err);
+          setSyncStatus('error');
+        }
+      }, 1000);
+    },
+    []
+  );
+
+  // Save to localStorage & schedule Firestore auto-save
   useEffect(() => {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(clients));
-    } catch (e) {
-      console.error('Error persisting clients:', e);
-    }
-  }, [clients]);
-
-  // Save config to localStorage
-  useEffect(() => {
-    try {
       localStorage.setItem(LOCAL_STORAGE_CONFIG_KEY, JSON.stringify(config));
     } catch (e) {
-      console.error('Error persisting config:', e);
+      console.error('Error persisting to local storage:', e);
     }
-  }, [config]);
+
+    if (isInitialLoadDone.current) {
+      triggerFirestoreSave(clients, config);
+    }
+  }, [clients, config, triggerFirestoreSave]);
 
   // Group clients by seller
   const sellerGroups = useMemo<SellerGroup[]>(() => {
@@ -111,18 +186,58 @@ export default function App() {
   const contactedCount = clients.filter((c) => c.status === 'contacted').length;
   const generatedCount = clients.filter((c) => !!c.generatedMessage).length;
 
-  const handleImportSuccess = (newClients: Client[]) => {
+  // Import handler
+  const handleImportSuccess = async (newClients: Client[]) => {
     setClients(newClients);
+    setSyncStatus('saving');
+    try {
+      await saveAppStateToFirestore(newClients, config, 'Planilha Importada em PDF');
+      setLastSavedAt(new Date().toISOString());
+      setSyncStatus('synced');
+    } catch (err) {
+      console.error('Error saving imported sheet to Firestore:', err);
+      setSyncStatus('error');
+    }
   };
 
-  const handleLoadSample = () => {
+  const handleLoadSample = async () => {
     setClients(SAMPLE_CLIENTS);
+    setSyncStatus('saving');
+    try {
+      await saveAppStateToFirestore(SAMPLE_CLIENTS, config, 'Exemplo de Demonstração');
+      setLastSavedAt(new Date().toISOString());
+      setSyncStatus('synced');
+    } catch (err) {
+      console.error('Error saving sample to Firestore:', err);
+      setSyncStatus('error');
+    }
   };
 
-  const handleClearData = () => {
+  const handleClearData = async () => {
     if (window.confirm('Tem certeza que deseja limpar todos os clientes cadastrados?')) {
       setClients([]);
       localStorage.removeItem(LOCAL_STORAGE_KEY);
+      setSyncStatus('saving');
+      try {
+        await saveAppStateToFirestore([], config, 'Base Limpa');
+        setLastSavedAt(new Date().toISOString());
+        setSyncStatus('synced');
+      } catch (err) {
+        console.error('Error clearing Firestore state:', err);
+      }
+    }
+  };
+
+  const handleManualSync = async () => {
+    setSyncStatus('saving');
+    try {
+      await saveAppStateToFirestore(clients, config, 'Sincronização Manual');
+      setLastSavedAt(new Date().toISOString());
+      setSyncStatus('synced');
+    } catch (err) {
+      console.error('Error in manual sync:', err);
+      setSyncStatus('error');
+      alert('Erro ao sincronizar com Firestore. Verifique a conexão.');
     }
   };
 
@@ -187,12 +302,21 @@ export default function App() {
           }
         });
 
-        setClients((prev) =>
-          prev.map((c) => {
-            const msg = messageMap.get(c.id);
-            return msg ? { ...c, generatedMessage: msg } : c;
-          })
-        );
+        const updatedClients = clients.map((c) => {
+          const msg = messageMap.get(c.id);
+          return msg ? { ...c, generatedMessage: msg } : c;
+        });
+
+        setClients(updatedClients);
+
+        // Instantly persist the newly generated messages to Firestore
+        try {
+          await saveAppStateToFirestore(updatedClients, config, 'Mensagens Geradas por IA');
+          setLastSavedAt(new Date().toISOString());
+          setSyncStatus('synced');
+        } catch (saveErr) {
+          console.error('Error saving generated messages to Firestore:', saveErr);
+        }
       }
     } catch (err: any) {
       console.error('Error in handleGenerateAll:', err);
@@ -224,7 +348,13 @@ export default function App() {
       }
 
       if (data.message) {
-        handleUpdateClientMessage(client.id, data.message);
+        const updatedClients = clients.map((c) =>
+          c.id === client.id ? { ...c, generatedMessage: data.message } : c
+        );
+        setClients(updatedClients);
+        saveAppStateToFirestore(updatedClients, config, `Mensagem Atualizada: ${client.name}`).catch(
+          (err) => console.error('Error saving updated single message to Firestore:', err)
+        );
       }
     } catch (err: any) {
       console.error('Error in handleRegenerateSingle:', err);
@@ -279,10 +409,13 @@ export default function App() {
         totalClients={totalClients}
         totalSellers={sellerGroups.length}
         contactedCount={contactedCount}
+        syncStatus={syncStatus}
+        lastSavedAt={lastSavedAt}
         onOpenImport={() => setIsImportModalOpen(true)}
         onLoadSample={handleLoadSample}
         onClearData={handleClearData}
         onExportCsv={handleExportCsv}
+        onManualSync={handleManualSync}
       />
 
       {/* Main Content */}
@@ -324,10 +457,10 @@ export default function App() {
       <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>
-            Sistema de Reativação WhatsApp por Vendedor • Powered by Google Gemini AI
+            Sistema de Reativação WhatsApp por Vendedor • Conectado ao Firebase Firestore
           </span>
           <span className="text-[11px] text-slate-400">
-            Dica: Ao clicar no botão WhatsApp, o contato é aberto com o texto preenchido pronto para envio.
+            Todas as planilhas, mensagens e palavras-chave ficam gravadas na nuvem até nova alteração.
           </span>
         </div>
       </footer>

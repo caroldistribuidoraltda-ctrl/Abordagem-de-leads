@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "Campaign": {
+      "title": "Campaign",
+      "description": "Configuração da última campanha e palavras-chaves",
+      "type": "object",
+      "properties": {
+        "context": { "type": "string" },
+        "keywords": { "type": "string" },
+        "tone": { "type": "string" },
+        "mentionDays": { "type": "boolean" },
+        "mentionSeller": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["context", "keywords"]
+    },
+    "ClientRecord": {
+      "title": "ClientRecord",
+      "description": "Dados de cada cliente da última planilha importada",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "cleanPhone": { "type": "string" },
+        "daysInactive": { "type": "number" },
+        "seller": { "type": "string" },
+        "status": { "type": "string" },
+        "generatedMessage": { "type": "string" },
+        "lastPurchaseDate": { "type": "string" },
+        "city": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "phone", "daysInactive", "seller"]
+    },
+    "AppState": {
+      "title": "AppState",
+      "description": "Estado consolidado da última planilha e campanha",
+      "type": "object",
+      "properties": {
+        "clients": { "type": "array" },
+        "config": { "type": "object" },
+        "lastImportedAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/app_state/{stateId}": {
+      "schema": "AppState",
+      "description": "Documento do estado com a última planilha e campanha"
+    },
+    "/campaign_config/{configId}": {
+      "schema": "Campaign",
+      "description": "Última mensagem e palavras-chaves configuradas"
+    },
+    "/imported_clients/{clientId}": {
+      "schema": "ClientRecord",
+      "description": "Clientes da última planilha importada"
+    }
+  }
+}
