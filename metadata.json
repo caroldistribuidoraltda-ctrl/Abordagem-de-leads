@@ -1,0 +1,6 @@
+{
+  "name": "Reativação de Clientes WhatsApp",
+  "description": "Importação de relatórios em PDF de clientes inativos agrupados por vendedor com geração de mensagens WhatsApp personalizadas e únicas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
